@@ -1,162 +1,127 @@
-# DevFlow — Project Implementation Plan
+# DevFlow
+### AI-Powered Developer Collaboration Platform — Implementation Plan
 
-**Status:** Planning complete. Local development environment validated end-to-end (auth, RBAC, real-time task board, chat, AI tools) through iterative debugging.
-
----
-
-## 1. Executive Summary
-
-**Vision:** DevFlow is a full-stack developer collaboration platform that unifies project/task management, real-time team communication, and AI-assisted developer workflows in a single tool — reducing context-switching between Jira/Linear, Slack, and standalone AI coding assistants.
-
-**Core goals:**
-- Give engineering teams a single place to track work (Kanban board), talk (real-time chat with presence), and offload repetitive dev tasks to AI (code explanation, README/doc/test generation, PR summarization).
-- Enforce organization-level access control (RBAC) so owners/admins can safely delegate without over-granting permissions.
-- Keep the system cheap to operate at small-team scale by caching AI responses and hot reads in Redis rather than re-computing or re-billing on every request.
-
-**Primary user workflow:**
-1. A user registers, which creates a new **organization** and makes them its **owner**.
-2. The owner creates **projects** and invites teammates (roles: owner/admin/developer/viewer).
-3. Team members collaborate on a **Kanban task board** that updates live for everyone via WebSockets.
-4. Team members chat in real-time **channels**, with typing indicators and online presence.
-5. Any authenticated user can run **AI tools** (explain code, generate README/docs/tests, summarize a PR) — results are cached so identical requests don't re-hit the AI provider.
-6. Opening a pull request on a linked GitHub repo automatically triggers an AI-generated PR summary posted into the project's chat channel.
+| | |
+|---|---|
+| **Status** | ✅ Core stack running end-to-end (auth · RBAC · real-time board · chat · AI tools) |
+| **Stage** | Local development validated → hardening for Phase 1 |
+| **Owner doc** | Principal architecture reference — supersedes chat history |
 
 ---
 
-## 2. Complete Tech Stack & Tools
+## 1 · Executive Summary
 
-| Layer | Choice | Notes |
+DevFlow unifies **project management**, **real-time team communication**, and **AI-assisted developer workflows** in one platform — replacing the Jira + Slack + standalone-AI-assistant sprawl most teams juggle.
+
+**Core goals**
+- 🎯 One workspace for tracking work, talking, and offloading repetitive dev tasks to AI
+- 🔒 Organization-level RBAC so access can be delegated safely
+- 💸 Cheap to run at small-team scale — Redis caches AI output and hot reads instead of re-billing every request
+
+**Primary workflow**
+
+```
+Register → creates Organization + Owner
+   ↓
+Owner creates Projects, invites teammates (owner/admin/developer/viewer)
+   ↓
+Team works the Kanban board (live for everyone via WebSockets)
+   ↓
+Team chats in real time (presence + typing indicators)
+   ↓
+Anyone runs AI tools — explain code · generate README/docs/tests · summarize a PR
+   ↓
+GitHub PR opened → webhook auto-posts an AI summary into the project's chat
+```
+
+---
+
+## 2 · Tech Stack
+
+| Layer | Choice | Why |
 |---|---|---|
-| **Frontend framework** | React 18 + TypeScript + Vite | Fast HMR dev loop; Vite proxies `/api` and `/socket.io` to the backend in dev |
-| **Styling** | Tailwind CSS | Utility-first, no separate CSS-in-JS runtime |
-| **Frontend routing** | React Router v6 | `ProtectedRoute` wrapper gates authenticated pages |
-| **Realtime client** | `socket.io-client` | Singleton connection shared across the app via a custom hook |
-| **HTTP client** | Axios | Interceptor handles silent access-token refresh on 401 |
-| **Icons** | `lucide-react` | |
-| **Backend runtime** | Node.js 20 + Express + TypeScript | `ts-node` + `nodemon` for dev, compiled `tsc` build for production |
-| **Realtime server** | Socket.IO | Presence (Redis-backed), chat, live task-board fan-out, notifications |
-| **Database** | PostgreSQL 16 | Source of truth: orgs, users, projects, tasks, messages, notifications, AI audit log |
-| **Cache** | Redis 7 | AI response cache (SHA-256 keyed), presence set, hot-read cache (task lists, analytics) |
-| **Auth** | JWT (access + refresh) + bcrypt | Access token 15m, refresh token 7d; RBAC middleware enforces role hierarchy per-route |
-| **AI provider** | **Groq** (OpenAI-compatible `chat/completions` API, `openai/gpt-oss-120b`) | Swapped in from an original Anthropic integration to use Groq's free tier; the service layer is provider-agnostic and can be swapped again by editing one function |
-| **Validation** | Zod | Request body schemas in every controller |
-| **Containerization** | Docker (multi-stage builds) + Docker Compose | Separate `Dockerfile` per service; Compose wires Postgres, Redis, backend, frontend (nginx) together |
-| **CI/CD** | GitHub Actions | Lint → test (against real Postgres/Redis service containers) → build → Docker image push → deploy stage (AWS ECS-oriented) |
-| **Testing** | Jest + Supertest | Integration tests hit the real Express app + a test Postgres instance |
-
-**Key backend packages:** `express`, `pg`, `@types/pg`, `ioredis`, `socket.io`, `jsonwebtoken`, `bcryptjs`, `zod`, `express-rate-limit`, `helmet`, `cors`, `morgan`, `uuid`.
-
-**Key frontend packages:** `react-router-dom`, `socket.io-client`, `axios`, `zustand` (available, not yet wired for global state beyond context), `lucide-react`, `date-fns`.
+| Frontend | React 18 · TypeScript · Vite | Fast HMR; dev server proxies `/api` + `/socket.io` |
+| Styling | Tailwind CSS | No CSS-in-JS runtime overhead |
+| Routing | React Router v6 | `ProtectedRoute` gates authenticated pages |
+| Realtime client | `socket.io-client` | Singleton connection, shared via hook |
+| HTTP client | Axios | Interceptor silently refreshes expired access tokens |
+| Backend | Node 20 · Express · TypeScript | `nodemon` + `ts-node` dev, `tsc` build for prod |
+| Realtime server | Socket.IO | Presence, chat, live task board, notifications |
+| Database | PostgreSQL 16 | Orgs, users, projects, tasks, messages, AI audit log |
+| Cache | Redis 7 | AI response cache (SHA-256 keyed), presence, hot reads |
+| Auth | JWT (access 15m / refresh 7d) + bcrypt | Role-hierarchy RBAC enforced per route |
+| AI provider | **Groq** — `openai/gpt-oss-120b` | Free tier, OpenAI-compatible; swappable in one file |
+| Validation | Zod | Every controller validates its request body |
+| Containers | Docker (multi-stage) + Compose | Postgres + Redis + backend + frontend (nginx) |
+| CI/CD | GitHub Actions | Lint → test → build → push image → deploy (AWS ECS-ready) |
+| Testing | Jest + Supertest | Integration tests against a real Postgres/Redis instance |
 
 ---
 
-## 3. Directory & File Structure
+## 3 · Directory Structure
 
 ```
 devflow/
-├── README.md
-├── docker-compose.yml
-├── .github/
-│   └── workflows/
-│       └── ci-cd.yml
+├── README.md · docker-compose.yml
+├── .github/workflows/ci-cd.yml
 │
 ├── backend/
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── jest.config.js
-│   ├── Dockerfile
-│   ├── .env.example
+│   ├── package.json · tsconfig.json · jest.config.js · Dockerfile · .env.example
 │   └── src/
-│       ├── server.ts                 # HTTP + Socket.IO bootstrap
-│       ├── app.ts                    # Express app assembly (middleware, routes)
-│       │
-│       ├── config/
-│       │   ├── db.ts                 # pg Pool + query() helper
-│       │   └── redis.ts              # ioredis client + cache-aside helper
-│       │
-│       ├── middleware/
-│       │   ├── auth.ts               # requireAuth (JWT verification)
-│       │   ├── rbac.ts               # requireRole / requireAnyRole
-│       │   └── errorHandler.ts       # ApiError + centralized error handler
-│       │
-│       ├── utils/
-│       │   └── jwt.ts                # sign/verify access + refresh tokens
-│       │
-│       ├── models/
-│       │   ├── User.ts
-│       │   └── Task.ts
-│       │
-│       ├── controllers/
-│       │   ├── auth.controller.ts
-│       │   ├── task.controller.ts
-│       │   └── ai.controller.ts
-│       │
-│       ├── routes/
-│       │   ├── auth.routes.ts
-│       │   ├── task.routes.ts
-│       │   ├── ai.routes.ts
-│       │   ├── org.routes.ts
-│       │   ├── project.routes.ts
-│       │   ├── webhook.routes.ts     # GitHub PR webhook → auto AI summary
-│       │   └── analytics.routes.ts
-│       │
-│       ├── services/
-│       │   ├── ai.service.ts         # Groq integration + Redis caching + audit log
-│       │   └── notification.service.ts
-│       │
-│       ├── sockets/
-│       │   └── index.ts              # presence, chat, task board, notifications
-│       │
-│       ├── db/
-│       │   └── schema.sql            # full Postgres schema
-│       │
-│       └── __tests__/
-│           ├── auth.test.ts
-│           └── rbac.test.ts
+│       ├── server.ts              HTTP + Socket.IO bootstrap
+│       ├── app.ts                 Express app assembly
+│       ├── config/                db.ts · redis.ts
+│       ├── middleware/            auth.ts · rbac.ts · errorHandler.ts
+│       ├── utils/jwt.ts
+│       ├── models/                User.ts · Task.ts
+│       ├── controllers/           auth · task · ai
+│       ├── routes/                auth · task · ai · org · project · webhook · analytics
+│       ├── services/              ai.service.ts · notification.service.ts
+│       ├── sockets/index.ts
+│       ├── db/schema.sql
+│       └── __tests__/             auth.test.ts · rbac.test.ts
 │
 └── frontend/
-    ├── package.json
-    ├── tsconfig.json
-    ├── vite.config.ts
-    ├── tailwind.config.js
-    ├── postcss.config.js
-    ├── index.html
-    ├── Dockerfile
-    ├── nginx.conf
+    ├── package.json · vite.config.ts · tailwind.config.js · Dockerfile · nginx.conf
     └── src/
-        ├── main.tsx
-        ├── App.tsx
-        ├── index.css
-        │
-        ├── context/
-        │   └── AuthContext.tsx
-        │
-        ├── hooks/
-        │   └── useSocket.ts
-        │
-        ├── services/
-        │   └── api.ts                # axios instance + refresh-token interceptor
-        │
-        ├── components/
-        │   └── layout/
-        │       └── AppLayout.tsx     # sidebar nav, presence counter, logout
-        │
-        └── pages/
-            ├── LoginPage.tsx
-            ├── RegisterPage.tsx
-            ├── DashboardPage.tsx     # project list + create-project form
-            ├── TaskBoardPage.tsx     # Kanban board + create-task form
-            ├── ChatPage.tsx
-            └── AiToolsPage.tsx
+        ├── main.tsx · App.tsx
+        ├── context/AuthContext.tsx
+        ├── hooks/useSocket.ts
+        ├── services/api.ts
+        ├── components/layout/AppLayout.tsx
+        └── pages/                Login · Register · Dashboard · TaskBoard · Chat · AiTools
 ```
 
 ---
 
-## 4. Full Code Specifications & Boilerplate
+## 4 · Fixed-Issues Log
 
-All files below reflect the **final, debugged state** — including fixes made after initial implementation (missing `@types/pg`, JWT `expiresIn` typing, the ESM `node-fetch` removal in favor of built-in `fetch`, the Anthropic→Groq swap, the `task_priority` enum cast, the `resolveChannel` fix for chat, the `NavLink` exact-match fix, and the Vite WebSocket proxy).
+Every entry below was found and resolved live during setup — this table is the fast-scan version; full corrected code is in §5.
 
-### 4.1 `backend/src/server.ts`
+| # | Symptom | Root cause | Fix |
+|---|---|---|---|
+| 1 | `Could not find a declaration file for module 'pg'` | Missing dev dependency | `npm i -D @types/pg` |
+| 2 | `jwt.sign` overload errors | `@types/jsonwebtoken` narrowed `expiresIn` to a branded type | Cast env string `as SignOptions["expiresIn"]` |
+| 3 | `Property 'user' does not exist on RemoteSocket` | `fetchSockets()` returns a different type than `Socket` | Targeted `as any` cast |
+| 4 | `ERR_REQUIRE_ESM` on `node-fetch` | Package is now ESM-only | Removed import — use Node 18+ built-in `fetch` |
+| 5 | `SASL: client password must be a string` | `.env` never created / not loaded | `Copy-Item .env.example .env`, verify `DATABASE_URL`, full restart |
+| 6 | `invalid input syntax for type uuid: "current"` | Sidebar linked to placeholder `/tasks/current` | Store `devflow_last_project_id` in `localStorage`; link to real project |
+| 7 | Anthropic `401 authentication_error` | Placeholder API key | Swapped provider to **Groq** (free tier) |
+| 8 | Groq `404 model_not_found` | `llama-3.3-70b-versatile` deprecated | Switched to `openai/gpt-oss-120b` |
+| 9 | Chat crashes: `invalid input syntax for type uuid: "general"` | Channel slug used directly as UUID FK | Added `resolveChannel()` — find-or-create by name |
+| 10 | Chat never connects | Vite proxy missing `/socket.io` rule | Added WebSocket proxy entry with `ws: true` |
+| 11 | Both "Dashboard" and "Tasks" tabs highlight together | `NavLink` prefix-matches `/` against every route | `end={to === "/"}` |
+| 12 | `column "priority" is of type task_priority but expression is of type text` | `COALESCE($4, 'medium')` — Postgres infers `$4` as `text` | Cast: `COALESCE($4::task_priority, 'medium')` |
+| 13 | `Add task` fails with `Invalid uuid` | Submitted from placeholder `/tasks/current` route | Guarded submit handler + friendly inline warning |
+
+---
+
+## 5 · Core Code (final, debugged state)
+
+> Each block reflects the **corrected** version — see §4 for what changed and why.
+
+<details>
+<summary><strong>backend/src/server.ts</strong> — HTTP + Socket.IO bootstrap</summary>
 
 ```typescript
 import "dotenv/config";
@@ -188,8 +153,10 @@ process.on("SIGTERM", () => {
   httpServer.close(() => process.exit(0));
 });
 ```
+</details>
 
-### 4.2 `backend/src/app.ts`
+<details>
+<summary><strong>backend/src/app.ts</strong> — Express app assembly</summary>
 
 ```typescript
 import express from "express";
@@ -214,8 +181,8 @@ export function createApp() {
   app.use(cors({ origin: process.env.CLIENT_URL || "*", credentials: true }));
   app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 
-  // Webhooks need the raw body for HMAC signature verification, so they're
-  // mounted BEFORE the global express.json() parser consumes the stream.
+  // Webhooks need the raw body for HMAC verification — mounted before
+  // express.json() so the parser doesn't consume the stream first.
   app.use("/api/webhooks", express.raw({ type: "application/json" }), webhookRoutes);
 
   app.use(express.json({ limit: "2mb" }));
@@ -240,10 +207,13 @@ export function createApp() {
   return app;
 }
 ```
+</details>
 
-### 4.3 `backend/src/config/db.ts`
+<details>
+<summary><strong>backend/src/config/db.ts</strong> + <strong>redis.ts</strong></summary>
 
 ```typescript
+// db.ts
 import { Pool } from "pg";
 
 export const pool = new Pool({
@@ -252,9 +222,7 @@ export const pool = new Pool({
   idleTimeoutMillis: 30000,
 });
 
-pool.on("error", (err) => {
-  console.error("Unexpected PostgreSQL error on idle client", err);
-});
+pool.on("error", (err) => console.error("Unexpected PostgreSQL error on idle client", err));
 
 export async function query<T = any>(text: string, params?: any[]): Promise<T[]> {
   const result = await pool.query(text, params);
@@ -262,9 +230,8 @@ export async function query<T = any>(text: string, params?: any[]): Promise<T[]>
 }
 ```
 
-### 4.4 `backend/src/config/redis.ts`
-
 ```typescript
+// redis.ts
 import Redis from "ioredis";
 
 export const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379", {
@@ -274,14 +241,9 @@ export const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379"
 redis.on("error", (err) => console.error("Redis error:", err));
 redis.on("connect", () => console.log("Redis connected"));
 
-export async function cacheGetOrSet<T>(
-  key: string,
-  ttlSeconds: number,
-  fetcher: () => Promise<T>
-): Promise<T> {
+export async function cacheGetOrSet<T>(key: string, ttlSeconds: number, fetcher: () => Promise<T>): Promise<T> {
   const cached = await redis.get(key);
   if (cached) return JSON.parse(cached) as T;
-
   const fresh = await fetcher();
   await redis.set(key, JSON.stringify(fresh), "EX", ttlSeconds);
   return fresh;
@@ -292,10 +254,10 @@ export async function invalidate(pattern: string) {
   if (keys.length) await redis.del(...keys);
 }
 ```
+</details>
 
-### 4.5 `backend/src/utils/jwt.ts`
-
-> Fixed: newer `@types/jsonwebtoken` narrows `expiresIn` to a branded string type. Env-var strings need an explicit cast.
+<details>
+<summary><strong>backend/src/utils/jwt.ts</strong> — fix #2</summary>
 
 ```typescript
 import jwt, { SignOptions } from "jsonwebtoken";
@@ -328,8 +290,10 @@ export function verifyRefreshToken(token: string): { userId: string } {
   return jwt.verify(token, process.env.JWT_REFRESH_SECRET as string) as { userId: string };
 }
 ```
+</details>
 
-### 4.6 `backend/src/middleware/rbac.ts`
+<details>
+<summary><strong>backend/src/middleware/rbac.ts</strong> — role-hierarchy access control</summary>
 
 ```typescript
 import { Response, NextFunction } from "express";
@@ -337,17 +301,11 @@ import { AuthedRequest } from "./auth";
 
 export type Role = "owner" | "admin" | "developer" | "viewer";
 
-const ROLE_RANK: Record<Role, number> = {
-  owner: 4,
-  admin: 3,
-  developer: 2,
-  viewer: 1,
-};
+const ROLE_RANK: Record<Role, number> = { owner: 4, admin: 3, developer: 2, viewer: 1 };
 
 export function requireRole(minRole: Role) {
   return (req: AuthedRequest, res: Response, next: NextFunction) => {
     if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-
     if (ROLE_RANK[req.user.role] < ROLE_RANK[minRole]) {
       return res.status(403).json({
         error: `Requires role '${minRole}' or higher. Current role: '${req.user.role}'.`,
@@ -367,10 +325,10 @@ export function requireAnyRole(...roles: Role[]) {
   };
 }
 ```
+</details>
 
-### 4.7 `backend/src/models/Task.ts`
-
-> Fixed: `COALESCE($4, 'medium')` needs an explicit `::task_priority` cast, or Postgres infers `$4` as `text` and rejects the assignment to the `priority` enum column.
+<details>
+<summary><strong>backend/src/models/Task.ts</strong> — fix #12 (enum cast)</summary>
 
 ```typescript
 import { query } from "../config/db";
@@ -391,33 +349,18 @@ export interface Task {
 
 export const TaskModel = {
   async listByProject(projectId: string): Promise<Task[]> {
-    return query<Task>(
-      "SELECT * FROM tasks WHERE project_id = $1 ORDER BY created_at DESC",
-      [projectId]
-    );
+    return query<Task>("SELECT * FROM tasks WHERE project_id = $1 ORDER BY created_at DESC", [projectId]);
   },
 
   async create(data: {
-    projectId: string;
-    title: string;
-    description?: string;
-    priority?: string;
-    assigneeId?: string;
-    createdBy: string;
-    dueDate?: string;
+    projectId: string; title: string; description?: string; priority?: string;
+    assigneeId?: string; createdBy: string; dueDate?: string;
   }): Promise<Task> {
     const rows = await query<Task>(
       `INSERT INTO tasks (project_id, title, description, priority, assignee_id, created_by, due_date)
        VALUES ($1, $2, $3, COALESCE($4::task_priority, 'medium'), $5, $6, $7) RETURNING *`,
-      [
-        data.projectId,
-        data.title,
-        data.description ?? null,
-        data.priority ?? null,
-        data.assigneeId ?? null,
-        data.createdBy,
-        data.dueDate ?? null,
-      ]
+      [data.projectId, data.title, data.description ?? null, data.priority ?? null,
+       data.assigneeId ?? null, data.createdBy, data.dueDate ?? null]
     );
     return rows[0];
   },
@@ -438,10 +381,10 @@ export const TaskModel = {
   },
 };
 ```
+</details>
 
-### 4.8 `backend/src/services/ai.service.ts`
-
-> Swapped from Anthropic to Groq's OpenAI-compatible endpoint. The `node-fetch` import was removed in favor of Node 18+'s built-in global `fetch`, which also resolved an `ERR_REQUIRE_ESM` crash.
+<details>
+<summary><strong>backend/src/services/ai.service.ts</strong> — fixes #4, #7, #8 (Groq)</summary>
 
 ```typescript
 import crypto from "crypto";
@@ -451,24 +394,14 @@ import { query } from "../config/db";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 
-type AiFeature =
-  | "code_explanation"
-  | "readme_generation"
-  | "documentation"
-  | "test_generation"
-  | "pr_summary";
+type AiFeature = "code_explanation" | "readme_generation" | "documentation" | "test_generation" | "pr_summary";
 
 const SYSTEM_PROMPTS: Record<AiFeature, string> = {
-  code_explanation:
-    "You are a senior engineer explaining code to a teammate. Be precise, note edge cases and complexity, and avoid restating the code line-by-line.",
-  readme_generation:
-    "You generate clear, professional README.md files for software projects: purpose, setup, usage, and structure.",
-  documentation:
-    "You write concise technical documentation (docstrings/API docs) matching the surrounding code's style and language conventions.",
-  test_generation:
-    "You write thorough, idiomatic unit tests for the given code, covering edge cases, using the project's apparent testing framework if inferable.",
-  pr_summary:
-    "You summarize a pull request diff for reviewers: what changed, why, risk areas, and anything that needs closer review. Be concise and skimmable.",
+  code_explanation: "You are a senior engineer explaining code to a teammate. Be precise, note edge cases and complexity, and avoid restating the code line-by-line.",
+  readme_generation: "You generate clear, professional README.md files for software projects: purpose, setup, usage, and structure.",
+  documentation: "You write concise technical documentation (docstrings/API docs) matching the surrounding code's style and language conventions.",
+  test_generation: "You write thorough, idiomatic unit tests for the given code, covering edge cases, using the project's apparent testing framework if inferable.",
+  pr_summary: "You summarize a pull request diff for reviewers: what changed, why, risk areas, and anything that needs closer review. Be concise and skimmable.",
 };
 
 async function callGroq(system: string, userContent: string): Promise<string> {
@@ -477,25 +410,15 @@ async function callGroq(system: string, userContent: string): Promise<string> {
 
   const res = await fetch(GROQ_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 2000,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: userContent },
-      ],
+      messages: [{ role: "system", content: system }, { role: "user", content: userContent }],
     }),
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Groq API error (${res.status}): ${text}`);
-  }
-
+  if (!res.ok) throw new Error(`Groq API error (${res.status}): ${await res.text()}`);
   const data: any = await res.json();
   return data.choices?.[0]?.message?.content ?? "";
 }
@@ -505,11 +428,7 @@ function hashInput(feature: AiFeature, input: string): string {
 }
 
 export async function runAiFeature(params: {
-  feature: AiFeature;
-  input: string;
-  userId: string;
-  projectId?: string;
-  ttlSeconds?: number;
+  feature: AiFeature; input: string; userId: string; projectId?: string; ttlSeconds?: number;
 }): Promise<{ result: string; cached: boolean }> {
   const { feature, input, userId, projectId, ttlSeconds = 3600 } = params;
   const inputHash = hashInput(feature, input);
@@ -532,8 +451,8 @@ export async function runAiFeature(params: {
 export const AiService = {
   explainCode: (code: string, userId: string, projectId?: string) =>
     runAiFeature({ feature: "code_explanation", input: code, userId, projectId }),
-  generateReadme: (projectContext: string, userId: string, projectId?: string) =>
-    runAiFeature({ feature: "readme_generation", input: projectContext, userId, projectId }),
+  generateReadme: (ctx: string, userId: string, projectId?: string) =>
+    runAiFeature({ feature: "readme_generation", input: ctx, userId, projectId }),
   generateDocs: (code: string, userId: string, projectId?: string) =>
     runAiFeature({ feature: "documentation", input: code, userId, projectId }),
   generateTests: (code: string, userId: string, projectId?: string) =>
@@ -542,10 +461,10 @@ export const AiService = {
     runAiFeature({ feature: "pr_summary", input: diff, userId, projectId, ttlSeconds: 900 }),
 };
 ```
+</details>
 
-### 4.9 `backend/src/sockets/index.ts`
-
-> Fixed: `message:send` originally inserted the raw URL slug (e.g. `"general"`) directly into the `channel_id` UUID column. Added `resolveChannel()` to find-or-create a real channel row by name. Also fixed a `RemoteSocket` type mismatch in the disconnect handler with a targeted `as any` cast.
+<details>
+<summary><strong>backend/src/sockets/index.ts</strong> — fixes #3, #9 (channel resolution)</summary>
 
 ```typescript
 import { Server as HttpServer } from "http";
@@ -554,17 +473,8 @@ import { verifyAccessToken } from "../utils/jwt";
 import { redis } from "../config/redis";
 import { query } from "../config/db";
 
-interface SocketUser {
-  userId: string;
-  organizationId: string;
-  role: string;
-}
-
-declare module "socket.io" {
-  interface Socket {
-    user?: SocketUser;
-  }
-}
+interface SocketUser { userId: string; organizationId: string; role: string; }
+declare module "socket.io" { interface Socket { user?: SocketUser; } }
 
 const PRESENCE_KEY = (orgId: string) => `presence:org:${orgId}`;
 
@@ -578,11 +488,7 @@ export function initSockets(httpServer: HttpServer) {
       const token = socket.handshake.auth?.token as string | undefined;
       if (!token) return next(new Error("Missing auth token"));
       const payload = verifyAccessToken(token);
-      socket.user = {
-        userId: payload.userId,
-        organizationId: payload.organizationId,
-        role: payload.role,
-      };
+      socket.user = { userId: payload.userId, organizationId: payload.organizationId, role: payload.role };
       next();
     } catch {
       next(new Error("Invalid auth token"));
@@ -614,19 +520,12 @@ export function initSockets(httpServer: HttpServer) {
     });
 
     socket.on("task:subscribe", (projectId: string) => socket.join(`project:${projectId}`));
-
-    socket.on(
-      "task:status_changed",
-      (payload: { projectId: string; taskId: string; status: string }) => {
-        socket.to(`project:${payload.projectId}`).emit("task:updated", payload);
-      }
-    );
+    socket.on("task:status_changed", (payload: { projectId: string; taskId: string; status: string }) => {
+      socket.to(`project:${payload.projectId}`).emit("task:updated", payload);
+    });
 
     socket.on("notification:ack", async (notificationId: string) => {
-      await query("UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2", [
-        notificationId,
-        user.userId,
-      ]);
+      await query("UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2", [notificationId, user.userId]);
     });
 
     socket.on("disconnect", async () => {
@@ -648,30 +547,23 @@ async function getOnlineUsers(organizationId: string): Promise<string[]> {
   return Object.keys(map);
 }
 
-/**
- * The frontend addresses channels by a human-readable slug (e.g. "general"),
- * but the messages table's channel_id column is a real UUID foreign key.
- * This finds an existing channel row by name, or creates one on first use.
- */
+/** Resolves a human-readable channel slug (e.g. "general") to a real UUID
+ *  row, creating it on first use — the frontend never deals with UUIDs. */
 async function resolveChannel(name: string): Promise<{ id: string }> {
   const existing = await query<{ id: string }>("SELECT id FROM channels WHERE name = $1 LIMIT 1", [name]);
   if (existing[0]) return existing[0];
-
-  const created = await query<{ id: string }>(
-    "INSERT INTO channels (name) VALUES ($1) RETURNING id",
-    [name]
-  );
+  const created = await query<{ id: string }>("INSERT INTO channels (name) VALUES ($1) RETURNING id", [name]);
   return created[0];
 }
 
 export function emitToUser(io: Server, userId: string, event: string, payload: unknown) {
-  io.sockets.sockets.forEach((s) => {
-    if (s.user?.userId === userId) s.emit(event, payload);
-  });
+  io.sockets.sockets.forEach((s) => { if (s.user?.userId === userId) s.emit(event, payload); });
 }
 ```
+</details>
 
-### 4.10 `backend/src/db/schema.sql` (core tables)
+<details>
+<summary><strong>backend/src/db/schema.sql</strong> — core tables</summary>
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -760,11 +652,11 @@ CREATE TABLE ai_requests (
 );
 ```
 
-*(Full schema — including `task_activity`, `notifications`, and `team_analytics_daily` — lives in `backend/src/db/schema.sql`.)*
+*Full schema (`task_activity`, `notifications`, `team_analytics_daily`) lives in `backend/src/db/schema.sql`.*
+</details>
 
-### 4.11 `frontend/vite.config.ts`
-
-> Fixed: the original config only proxied `/api`. Socket.IO's handshake goes over `/socket.io`, so without this rule the chat/presence/task-board sockets silently connected to the frontend's own dev server instead of the backend and never worked.
+<details>
+<summary><strong>frontend/vite.config.ts</strong> — fix #10 (WebSocket proxy)</summary>
 
 ```typescript
 import { defineConfig } from "vite";
@@ -776,18 +668,15 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://localhost:4000",
-      "/socket.io": {
-        target: "http://localhost:4000",
-        ws: true,
-      },
+      "/socket.io": { target: "http://localhost:4000", ws: true },
     },
   },
 });
 ```
+</details>
 
-### 4.12 `frontend/src/components/layout/AppLayout.tsx`
-
-> Fixed: `NavLink` matches by path-prefix by default, so the Dashboard link (`/`) lit up as "active" on every route. `end={to === "/"}` restricts exact-match behavior to that one link. Also added `lastProjectId` persistence so the "Tasks" nav item points at a real project instead of a dead placeholder.
+<details>
+<summary><strong>frontend/src/components/layout/AppLayout.tsx</strong> — fixes #6, #11</summary>
 
 ```typescriptreact
 import { Outlet, NavLink } from "react-router-dom";
@@ -813,9 +702,7 @@ export default function AppLayout() {
     if (!socket) return;
     const handler = (ids: string[]) => setOnlineCount(ids.length);
     socket.on("presence:update", handler);
-    return () => {
-      socket.off("presence:update", handler);
-    };
+    return () => { socket.off("presence:update", handler); };
   }, [socket]);
 
   return (
@@ -849,10 +736,7 @@ export default function AppLayout() {
             <p className="font-medium text-slate-800">{user?.fullName}</p>
             <p className="text-xs text-slate-400 capitalize">{user?.role}</p>
           </div>
-          <button
-            onClick={logout}
-            className="flex items-center gap-2 w-full px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg"
-          >
+          <button onClick={logout} className="flex items-center gap-2 w-full px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 rounded-lg">
             <LogOut size={16} /> Log out
           </button>
         </div>
@@ -865,10 +749,10 @@ export default function AppLayout() {
   );
 }
 ```
+</details>
 
-### 4.13 `frontend/src/pages/TaskBoardPage.tsx`
-
-> Includes the create-task form (added after initial delivery) and a guard against submitting on the `/tasks/current` placeholder route.
+<details>
+<summary><strong>frontend/src/pages/TaskBoardPage.tsx</strong> — fix #13 (create-task guard)</summary>
 
 ```typescriptreact
 import { useEffect, useState } from "react";
@@ -914,17 +798,11 @@ export default function TaskBoardPage() {
   useEffect(() => {
     if (!socket) return;
     socket.emit("task:subscribe", projectId);
-
     const onCreated = (task: Task) => setTasks((prev) => [task, ...prev]);
-    const onUpdated = (task: Task) =>
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...task } : t)));
-
+    const onUpdated = (task: Task) => setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, ...task } : t)));
     socket.on("task:created", onCreated);
     socket.on("task:updated", onUpdated);
-    return () => {
-      socket.off("task:created", onCreated);
-      socket.off("task:updated", onUpdated);
-    };
+    return () => { socket.off("task:created", onCreated); socket.off("task:updated", onUpdated); };
   }, [socket, projectId]);
 
   async function moveTask(taskId: string, status: Task["status"]) {
@@ -961,11 +839,7 @@ export default function TaskBoardPage() {
             placeholder="Add a task..."
             className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm"
           />
-          <button
-            type="submit"
-            disabled={creating}
-            className="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
-          >
+          <button type="submit" disabled={creating} className="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">
             {creating ? "Adding..." : "Add task"}
           </button>
         </form>
@@ -976,29 +850,17 @@ export default function TaskBoardPage() {
           <div key={col.key} className="flex-1 min-w-[240px] bg-slate-100 rounded-xl p-3">
             <h3 className="text-sm font-semibold text-slate-600 mb-3">{col.label}</h3>
             <div className="space-y-2">
-              {tasks
-                .filter((t) => t.status === col.key)
-                .map((t) => (
-                  <div key={t.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
-                    <p className="text-sm font-medium text-slate-800">{t.title}</p>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${PRIORITY_COLOR[t.priority]}`}>
-                        {t.priority}
-                      </span>
-                      <select
-                        value={t.status}
-                        onChange={(e) => moveTask(t.id, e.target.value as Task["status"])}
-                        className="text-xs border border-slate-200 rounded px-1 py-0.5"
-                      >
-                        {COLUMNS.map((c) => (
-                          <option key={c.key} value={c.key}>
-                            {c.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+              {tasks.filter((t) => t.status === col.key).map((t) => (
+                <div key={t.id} className="bg-white border border-slate-200 rounded-lg p-3 shadow-sm">
+                  <p className="text-sm font-medium text-slate-800">{t.title}</p>
+                  <div className="flex items-center justify-between mt-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${PRIORITY_COLOR[t.priority]}`}>{t.priority}</span>
+                    <select value={t.status} onChange={(e) => moveTask(t.id, e.target.value as Task["status"])} className="text-xs border border-slate-200 rounded px-1 py-0.5">
+                      {COLUMNS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                    </select>
                   </div>
-                ))}
+                </div>
+              ))}
             </div>
           </div>
         ))}
@@ -1007,13 +869,13 @@ export default function TaskBoardPage() {
   );
 }
 ```
+</details>
 
 ---
 
-## 5. Environment Variables Template
+## 6 · Environment Variables
 
-### `backend/.env.example`
-
+**`backend/.env.example`**
 ```bash
 # Server
 PORT=4000
@@ -1032,7 +894,7 @@ JWT_REFRESH_SECRET=replace_with_another_strong_random_secret
 JWT_ACCESS_EXPIRES_IN=15m
 JWT_REFRESH_EXPIRES_IN=7d
 
-# AI Provider (Groq — free tier, OpenAI-compatible)
+# AI Provider — Groq (free tier, OpenAI-compatible)
 GROQ_API_KEY=gsk_xxxxxxxx
 GROQ_MODEL=openai/gpt-oss-120b
 
@@ -1045,86 +907,73 @@ RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=100
 ```
 
-### `frontend/.env.example`
-
-The frontend has no required secrets in local development — Vite proxies `/api` and `/socket.io` to `http://localhost:4000`. If deploying the frontend separately from the backend (not via the same nginx/Compose setup), add:
-
+**`frontend/.env.example`** — *not required locally* (Vite proxies to `localhost:4000`). Needed only for split-host deployment:
 ```bash
 VITE_API_BASE_URL=https://api.yourdomain.com
 VITE_SOCKET_URL=https://api.yourdomain.com
 ```
-
-*(Wiring these in requires updating `frontend/src/services/api.ts` and `frontend/src/hooks/useSocket.ts` to read `import.meta.env.VITE_API_BASE_URL` instead of the relative `/api` path — not yet done, since local dev uses the Vite proxy.)*
+*(Requires updating `services/api.ts` and `hooks/useSocket.ts` to read these — not yet wired.)*
 
 ---
 
-## 6. Step-by-Step Setup Guide
+## 7 · Setup Guide
 
 ```bash
-# 1. Extract/clone the project and enter it
+# 1 — Enter the project
 cd devflow
 
-# 2. Start Postgres + Redis via Docker (make sure Docker Desktop is running)
+# 2 — Start Postgres + Redis (Docker Desktop must be running)
 docker compose up postgres redis -d
 
-# 3. Backend: install, configure, migrate, run
+# 3 — Backend
 cd backend
-cp .env.example .env
-# → edit .env: fill in JWT secrets and GROQ_API_KEY
+cp .env.example .env                        # fill in JWT secrets + GROQ_API_KEY
 npm install
-npm install --save-dev @types/pg   # required — not in package.json by default
-# Schema is auto-applied by the Postgres container's init script the first
-# time the volume is created. To apply/re-apply manually:
+npm install --save-dev @types/pg            # required — see Fixed-Issues #1
 psql "postgresql://devflow:devflow@localhost:5432/devflow" -f src/db/schema.sql
-npm run dev
-# → wait for "DevFlow API listening on port 4000"
+npm run dev                                  # → "DevFlow API listening on port 4000"
 
-# 4. Frontend: install and run (in a second terminal)
+# 4 — Frontend (new terminal)
 cd ../frontend
 npm install
-npm run dev
-# → open http://localhost:5173
+npm run dev                                  # → http://localhost:5173
 
-# 5. Register your first account (creates an organization + owner user)
-# via the Register page in the browser.
+# 5 — Register your first account in the browser
+#     (creates an Organization + you as its Owner)
 
-# 6. (Optional) Run the full stack in Docker instead of steps 3-4
+# 6 — Optional: full stack via Docker instead of steps 3–4
 cd ..
-$env:GROQ_API_KEY="gsk_..."          # PowerShell; use export on macOS/Linux
+$env:GROQ_API_KEY="gsk_..."                  # PowerShell (use export on macOS/Linux)
 $env:JWT_ACCESS_SECRET="..."
 $env:JWT_REFRESH_SECRET="..."
-docker compose up --build
-# → open http://localhost:8080
+docker compose up --build                    # → http://localhost:8080
 ```
 
-**Run the test suite:**
-
 ```bash
-cd backend
-npm test
+# Run tests
+cd backend && npm test
 ```
 
 ---
 
-## 7. Next Milestones
+## 8 · Roadmap
 
-### Phase 1 — Stabilize the core (near-term hardening)
-- [ ] Add a global Socket.IO error boundary so a single bad event (e.g. a malformed payload) can't crash the whole backend process, as happened during dev when an unresolved channel slug threw inside a socket handler.
-- [ ] Add project-membership checks to task/project routes (currently RBAC checks role rank org-wide, not membership in the *specific* project).
-- [ ] Add a "create project" empty-state flow directly in onboarding (currently the Dashboard's create-project form is the only path — fine, but should be foregrounded for brand-new orgs).
-- [ ] Wire `VITE_API_BASE_URL` / `VITE_SOCKET_URL` env vars so frontend and backend can be deployed to different hosts.
-- [ ] Replace the ad-hoc `resolveChannel`-on-send pattern with an explicit "create channel" project-setup step, so channels aren't implicitly created by whichever message happens to arrive first.
+### 🔴 Phase 1 — Stabilize
+- [ ] Global Socket.IO error boundary — an unhandled event currently crashes the whole process
+- [ ] Per-project membership checks (RBAC is org-wide rank only, not project-scoped)
+- [ ] `VITE_API_BASE_URL` / `VITE_SOCKET_URL` wiring for split-host deployment
+- [ ] Replace implicit channel-creation-on-send with an explicit "create channel" step
 
-### Phase 2 — Feature completeness
-- [ ] Notification bell UI component in the frontend (backend `notification.service.ts` and sockets already emit `notification:new`; nothing renders it yet).
-- [ ] Nightly job (or Postgres trigger) to populate `team_analytics_daily` — the `analytics.routes.ts` endpoints already read from it, but nothing writes to it yet.
-- [ ] Drag-and-drop on the Kanban board (currently status changes via a `<select>`; drag handlers exist in the CSS/markup from the original scaffold but aren't wired to persist).
-- [ ] Multi-channel chat (channel list/switcher) instead of the single hardcoded `general` channel.
-- [ ] Org invite flow (currently the only way to add a teammate is for them to register their own separate organization — there's no "invite by email into my org" path yet).
+### 🟡 Phase 2 — Feature completeness
+- [ ] Notification bell UI (backend already emits `notification:new` — nothing renders it)
+- [ ] Nightly job to populate `team_analytics_daily` (analytics endpoints read from it; nothing writes to it)
+- [ ] Persist drag-and-drop board reordering (currently status changes via dropdown)
+- [ ] Multi-channel chat with a channel switcher
+- [ ] Org invite-by-email flow (currently no way to add a teammate into your org)
 
-### Phase 3 — Production readiness
-- [ ] Real GitHub App installation flow for `GITHUB_APP_TOKEN` (currently a static PAT env var) so the PR-summary webhook works per-installation rather than per-deployment.
-- [ ] Move AI provider selection behind a config flag so Groq/Anthropic/OpenAI can be swapped without code edits (currently requires editing `ai.service.ts` directly, as done during this build).
-- [ ] AWS deployment: RDS for Postgres, ElastiCache for Redis, ECS services for backend/frontend, ALB + ACM for TLS — the CI/CD pipeline's `deploy` job is currently a stub.
-- [ ] Structured logging (replace `morgan` + `console.log` with something shippable to CloudWatch/Datadog) and basic uptime/error alerting.
-- [ ] Load-test the Socket.IO presence/chat path before scaling past a single backend instance — the current in-memory `io.sockets.sockets` iteration in `emitToUser` won't work across multiple backend processes without a Redis adapter for Socket.IO.
+### 🟢 Phase 3 — Production readiness
+- [ ] Real GitHub App install flow (currently a static PAT)
+- [ ] AI provider behind a config flag, not a hardcoded file edit
+- [ ] AWS deploy: RDS + ElastiCache + ECS + ALB/ACM — CI/CD `deploy` job is still a stub
+- [ ] Structured logging + basic alerting
+- [ ] Redis adapter for Socket.IO before scaling past one backend instance
